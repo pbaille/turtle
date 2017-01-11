@@ -1,0 +1,8 @@
+/target
+/.idea
+/.nrepl-port
+/figwheel_server.log
+/resources/public/js/out
+workspace.xml
+resources/public/js
+*.iml
