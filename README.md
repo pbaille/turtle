@@ -1,18 +1,13 @@
 # turtle
 
-Project description FIXME
+L-systems, turtle graphics and stuff for cljs
+WIP
 
 ## Dev
 
 lein run -m clojure.main script/fig.clj
 
 visit localhost:5000
-
-## Prod
-
-lein cljsbuild once min
-
-open resources/public/prod.html
 
 ## License
 
