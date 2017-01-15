@@ -1,4 +1,4 @@
-(ns turtle.core
+(ns turtle.one
   (:require [cljs.pprint :refer [pprint]]))
 
 (def extent (juxt #(apply min %) #(apply max %)))
@@ -41,14 +41,19 @@
         sx (middle w [left right])
         sy (middle h [bottom top])]
 
+    (set! (.-globalCompositeOperation ctx) "lighter")
+    (set! (.-globalAlpha ctx) 0.5)
+
     (set! (.-strokeStyle ctx) (:stroke opts "rgba(0,0,0,.4)"))
+    (set! (.-fillStyle ctx) (:stroke opts "rgba(0,0,0,.1)"))
     (set! (.-lineWidth ctx) (:line-width opts 1))
     (.beginPath ctx)
     (let [[x y] (first pts)]
       (.moveTo ctx (+ sx x) (+ sy y)))
     (doseq [[x y] (rest pts)]
       (.lineTo ctx (+ sx x) (+ sy y)))
-    (.stroke ctx)))
+    (.stroke ctx)
+    (.fill ctx)))
 
 ;; sketch ----------------------------------------------------------
 
@@ -92,13 +97,20 @@
         :b (concat a1 a forward a0 b forward b a0 forward a a1)))
     []))
 
+(do (clear! "turtle-canvas")
+    (draw
+      (pierand*
+        {:step-fn #(rand-nth (range 5 20 5))
+         :angle-fn #(rand-nth (range 0 360 60))
+         :depth 6})))
+
 (comment
   (do (clear! "turtle-canvas")
       (draw
         (pierand*
           {:step-fn #(rand-nth (range 5 20 5))
            :angle-fn #(rand-nth (range 0 360 60))
-           :depth 9}))))
+           :depth 6}))))
 
 (defn pierand [{:keys [step-fn rule angle-fn depth] :as opts}]
   (if (pos? depth)
