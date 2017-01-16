@@ -3,9 +3,14 @@
 
 (enable-console-print!)
 
+;; ---------------------------------------------------------------------
 ;; helpers
+;; ---------------------------------------------------------------------
 
+; dom ----
 (defn $1 [sel] (js/document.querySelector sel))
+
+; draw ---
 
 (defn middle [width [left right]]
   (- (/ (- width (- right left)) 2) left))
@@ -170,6 +175,7 @@
    update the state turtle
    append new ctx-cmds to state"
   [state [verb & args :as cmd]]
+
   (condp = verb
 
     :f (let [{{:keys [x y]} :turtle :as state}
@@ -177,7 +183,7 @@
          (update state
                  :ctx-cmds
                  into
-                 [[:move-to [x y]] [:begin-path]]))
+                 [[:stroke] [:move-to [x y]] [:begin-path]]))
 
     :F (let [{{:keys [x y]} :turtle :as state}
              (update state :turtle (tf [:step]))]
@@ -216,7 +222,7 @@
 (def default-state
   {:canvas "canvas"
    :cmds []
-   :turtle {:step 2
+   :turtle {:step 10
             :angle 90}
    :init (fn [ctx]
            (set! (.-strokeStyle ctx) "rgba(0,0,0,.4)")
@@ -246,12 +252,10 @@
            ctx
            (get-center state))
 
-    (.beginPath ctx)
     (doseq [[c & args] ctx-cmds]
       (apply (ctx-actions c (fn [& _]))
              ctx
-             args))
-    (.stroke ctx)))
+             args))))
 
 ;; tests ------------------------------------------------------------------
 
@@ -265,17 +269,17 @@
                (update :iterations dec)))))
 
 (def simple-formatter
-  {:F [:turtle [:F]]
-   :f [:turtle [:f]]
-   :- [:turtle [:-]]
-   :+ [:turtle [:+]]})
+  {:F [:turtle :F]
+   :f [:turtle :f]
+   :- [:turtle :-]
+   :+ [:turtle :+]})
 
 (defn simple-draw [cmds & [turtle]]
   (draw
     (merge
       {:clear true
        :id "turtle-canvas"
-       :cmds cmds}
+       :cmds (vec (concat [[:begin-path]] cmds [[:stroke]]))}
       (when turtle {:turtle turtle}))))
 
 (comment
@@ -324,7 +328,7 @@
   ;1.9.b
   (simple-draw
     (l-system
-      {:iterations 3
+      {:iterations 2
        :axiom [:F :- :F :- :F :- :F]
        :rules {:F [:F :F :- :F :- :F :- :F :- :F :F]}
        :format simple-formatter}))
@@ -364,13 +368,13 @@
   ;1.10.a
   (simple-draw
     (l-system
-      {:iterations 14
+      {:iterations 10
        :axiom [:a]
        :rules {:a [:a :+ :b :+]
                :b [:- :a :- :b]}
        :format (assoc simple-formatter
-                 :b [:turtle [:F]]
-                 :a [:turtle [:F]])}))
+                 :b [:turtle :F]
+                 :a [:turtle :F])}))
 
   ;1.10.b
   (simple-draw
@@ -380,11 +384,11 @@
        :rules {:b [:a :+ :b :+ :a]
                :a [:b :- :a :- :b]}
        :format
-       {:a [:turtle [:F]]
-        :b [:turtle [:F]]
-        :+ [:turtle [:+]]
-        :- [:turtle [:-]]}})
-    {:turtle {:angle 60 :step 10}})
+       {:a [:turtle :F]
+        :b [:turtle :F]
+        :+ [:turtle :+]
+        :- [:turtle :-]}})
+    {:angle 60 :step 10})
 
   ;since 1.11 -> 1.14 seems really boring to type it is left as an exercice for the reader :)
 
