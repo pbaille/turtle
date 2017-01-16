@@ -8,7 +8,13 @@
 ;; ---------------------------------------------------------------------
 
 ; dom ----
-(defn $1 [sel] (js/document.querySelector sel))
+
+(defn $1 [sel]
+  (js/document.querySelector sel))
+
+(defn log [& xs]
+  (doseq [x xs]
+    (js/console.log x)))
 
 ; draw ---
 
@@ -50,7 +56,7 @@
             {miny :min maxy :max} :y} extent
            radians (* dir js/Math.PI (/ 180))
            [dx dy] [(* step (js/Math.sin radians))
-                 (* step (js/Math.cos radians))]]
+                    (* step (js/Math.cos radians))]]
        (assoc turtle
          :x (+ x dx)
          :y (+ y dy)

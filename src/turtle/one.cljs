@@ -52,8 +52,7 @@
       (.moveTo ctx (+ sx x) (+ sy y)))
     (doseq [[x y] (rest pts)]
       (.lineTo ctx (+ sx x) (+ sy y)))
-    (.stroke ctx)
-    (.fill ctx)))
+    (.stroke ctx)))
 
 ;; sketch ----------------------------------------------------------
 
@@ -96,13 +95,6 @@
         :a (concat a0 b forward a1 a forward a a1 forward b a0)
         :b (concat a1 a forward a0 b forward b a0 forward a a1)))
     []))
-
-(do (clear! "turtle-canvas")
-    (draw
-      (pierand*
-        {:step-fn #(rand-nth (range 5 20 5))
-         :angle-fn #(rand-nth (range 0 360 60))
-         :depth 6})))
 
 (comment
   (do (clear! "turtle-canvas")
@@ -244,8 +236,6 @@
            (mapv (fn [x] [x (make-rule)])
                  rules))
      :rule (first (shuffle rules))}))
-
-(repeatedly 3 #(println "yo"))
 
 (defn autofract [opts]
   (fract (into opts (autorules opts))))

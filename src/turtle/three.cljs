@@ -189,8 +189,8 @@
           c (pierand (assoc new-opts :rule :d))
           d (pierand (assoc new-opts :rule :a))]
       (condp = (or rule :a)
-        :d (concat #_(maybe 0.2 [[:mode [:circle (rand-nth (range 5 21 10))]]]) a2 b forward a1 a forward a a1 forward b a2)
-        :b (concat #_(maybe [[:mode [:polygon 5]]]) a1 c forward a3 d forward d a3 forward c a1)
+        :d (concat (maybe 0.2 [[:mode [:circle (rand-nth (range 5 21 10))]]]) a2 b forward a1 a forward a a1 forward b a2)
+        :b (concat (maybe [[:mode [:polygon 5]]]) a1 c forward a3 d forward d a3 forward c a1)
         :c (concat (maybe [(fill "red")]) a3 a forward a4 c forward c a4 forward a a3)
         :a (concat a4 d forward a2 b forward b a2 forward d a4)))
     []))
@@ -198,19 +198,19 @@
 (defn go []
   (draw
     {:canvas-id "turtle-canvas"
-     :width 1000
-     :height 1500
+     :width 500
+     :height 500
      :clear true
      :init (fn [s]
              (let [ctx (:ctx s)]
                (clear! s)
                (set! (.-lineWidth ctx) 0.5)
-               (set! (.-strokeStyle ctx) "rgba(0,0,0,0)")
+               (set! (.-strokeStyle ctx) "rgba(0,0,0,0.1)")
                (set! (.-fillStyle ctx) "rgba(100,0,50,.05)")
                (assoc s :ctx ctx)))
      :cmds
      (pierand
-       {:step-fn #(rand-nth [10 30 60])
+       {:step-fn #(rand-nth [10 20])
         :angle-fn #(rand-nth (range 0 360 60))
         :depth 6})}))
 

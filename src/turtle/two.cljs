@@ -150,10 +150,10 @@
      :cmds
      (pierand
        {:step-fn #(rand-nth (range 4 13 4))
-        :angle-fn #(rand-nth (range 0 360 45))
-        :depth 7})}))
+        :angle-fn #(rand-nth (range 0 360 30))
+        :depth 6})}))
 
 (set! (.-onclick js/document.body)
       go)
 
-(go)
+#_(go)
