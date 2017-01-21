@@ -177,7 +177,9 @@
    :bezier-curve-to m/bezier-curve-to
    :rounded-rect m/rounded-rect})
 
-(defn create-drawing-turtle [opts]
+(defn create-drawing-turtle
+  "create a drawing turtle from given options"
+  [opts]
   (merge
     {:step 10
      :angle 90
@@ -211,13 +213,16 @@
                :centerize? true
                :init
                (fn [canvas ctx]
-                 (clear! canvas)
                  (reset-transform ctx)
+                 (clear! canvas)
                  (set! (.-strokeStyle ctx) "rgba(0,0,0,.4)")
                  (set! (.-lineWidth ctx) 1))}}
     opts))
 
-(defn init! [{{:keys [canvas init]} :drawing :as turtle}]
+(defn init!
+  "get the turtle associated canvas, extract ctx,
+   apply initialize fn ([:drawing :init])"
+  [{{:keys [canvas init]} :drawing :as turtle}]
   (let [c (if (string? canvas)
             ($1 canvas)
             canvas)
@@ -229,8 +234,13 @@
             :canvas c
             :ctx ctx)))
 
-(defn draw! [t]
-  (let [ctx (get-in t [:drawing :ctx])
+(defn draw!
+  "compile cmds into drawing cmds,
+   handle centerization if specified
+   execute all ctx actions"
+  [t]
+  (let [t (reduce t> t (:cmds t))
+        ctx (get-in t [:drawing :ctx])
         cmds (get-in t [:drawing :cmds])
         centerize? (get-in t [:drawing :centerize?])
         ctx-cmds (mapcat next (filter #(= :ctx (first %)) cmds))]
@@ -239,9 +249,14 @@
     (doseq [[v & args :as c] ctx-cmds]
       (apply (get ctx-actions v) ctx args))))
 
-(defn t! [opts]
-  (let [t (init! (create-drawing-turtle opts))]
-    (draw! (reduce t> t (:cmds t)))))
+(defn t!
+  "all in one helper to create a drawing turtle from an option map,
+   initialize it then draw"
+  [opts]
+  (-> opts
+      create-drawing-turtle
+      init!
+      draw!))
 
 ;; tests ------------------------------------------------------------------
 
