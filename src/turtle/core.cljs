@@ -253,7 +253,7 @@
       (into [:>] (mfm args))
 
       :branch
-      (into [:branch] (mfm args))
+      (into [:branch (first args)] (mfm (next args)))
 
       :sym
       [:sym (first args) (cmd-rmap (second args) f)]
@@ -289,7 +289,12 @@
             turtle
             [:drawing :cmds]
             conj
-            [:ctx [:begin-path] [:move-to [ox oy]] [:line-to [x y]] [:stroke] [:close-path]])))
+            [:ctx
+             [:begin-path]
+             [:move-to [ox oy]]
+             [:line-to [x y]]
+             [:stroke]
+             [:close-path]])))
 
    :sym
    (fn
