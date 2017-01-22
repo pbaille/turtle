@@ -47,6 +47,8 @@
 (defn reset-transform [ctx]
   (.setTransform ctx 1 0 0 1 0 0))
 
+; monet mappings
+
 (def ctx-actions
   {:begin-path m/begin-path
    :close-path m/close-path
@@ -362,7 +364,7 @@
            (apply (get ctx-actions v) ctx args))))}))
 
 (defn drawing-turtle
-  "give birth to an artistic turtle"
+  "this turtle doesn't want to do real job"
   ([]
    (turtle
      {:tasks (merge flows drawing-tasks)
