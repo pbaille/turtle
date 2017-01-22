@@ -82,6 +82,7 @@
 
 ;; pierand --------------------------------------------------------
 
+;; 2d
 (defn pierand* [{:keys [step-fn rule angle-fn depth] :as opts}]
   (if (pos? depth)
     (let [forward [[:forward (step-fn)]]
@@ -104,6 +105,35 @@
            :angle-fn #(rand-nth (range 0 360 60))
            :depth 6}))))
 
+;; sym 3
+
+(defn pierand** [{:keys [step-fn rule angle-fn depth] :as opts}]
+  (if (pos? depth)
+    (let [forward [[:forward (step-fn)]]
+          angle (angle-fn)
+          a0 [[:turn angle]]
+          a1 [[:turn (- 270 angle)]]
+          new-opts (update opts :depth dec)
+          a (pierand* (assoc new-opts :rule :b))
+          b (pierand* (assoc new-opts :rule :a))]
+      (condp = (or rule :a)
+        :a (concat a0 b forward a1 a forward
+                   [[:turn 120]] a0 b forward a1 a forward
+                   [[:turn 240]] a0 b forward a1 a forward)
+        :b (concat a1 a forward a0 b forward
+                   [[:turn 120]] a1 a forward a0 b forward
+                   [[:turn 240]] a1 a forward a0 b forward)))
+    []))
+
+(comment
+  (do (clear! "turtle-canvas")
+      (draw
+        (pierand**
+          {:step-fn #(rand-nth (range 5 30 10))
+           :angle-fn #(rand-nth (range 0 360 10))
+           :depth 6}))))
+
+;; syms 4 ?? no!
 (defn pierand [{:keys [step-fn rule angle-fn depth] :as opts}]
   (if (pos? depth)
     (let [forward [[:forward (step-fn)]]

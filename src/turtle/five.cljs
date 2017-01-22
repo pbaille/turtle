@@ -47,7 +47,10 @@
 
 (def turtle-base-tasks
   "turtle base tasks"
-  {:set-step
+  {:goto
+   #(assoc % :x (first %2) :y (second %2))
+
+   :set-step
    #(assoc %1 :step %2)
 
    :step
@@ -184,29 +187,44 @@
     {:step 10
      :angle 90
      :cmds []
+     :x 0
+     :y 0
 
      ;; extra tasks for drawing
      :tasks
-     {:f #(let [{:keys [x y] :as turtle} (t> % [:step])]
-            (update-in
-              turtle
-              [:drawing :cmds]
-              conj
-              [:ctx [:stroke] [:move-to [x y]] [:begin-path]]))
+     (merge
+       {:f #(let [{:keys [x y] :as turtle} (t> % [:step])]
+              (update-in
+                turtle
+                [:drawing :cmds]
+                conj
+                [:ctx [:stroke] [:move-to [x y]] [:begin-path]]))
 
-      :F #(let [{:keys [x y] :as turtle} (t> % [:step])]
-            (update-in
-              turtle
-              [:drawing :cmds]
-              conj
-              [:ctx [:line-to [x y]]]))
+        :F #(let [t (if %2 (t> % [:set-step %2]) %)
+                  {:keys [x y] :as turtle} (t> t [:step])]
+              (update-in
+                turtle
+                [:drawing :cmds]
+                conj
+                [:ctx [:line-to [x y]]]))
 
-      ;; aliases
-      :- (tf [:turn-right])
-      :+ (tf [:turn-left])
+        :split #(let [{:keys [x y] :as t} %
+                      angles (map (fn [a] [[:ctx [:close-path]]
+                                           [:goto [x y]]
+                                           [:ctx [:begin-path]]
+                                           [:ctx [:move-to [(or x 0) (or y 0)]]]
+                                           [:turn a]])
+                                  (cons 0 (repeat (dec %2) (/ 360 %2))))
+                      cmds (apply concat (interleave angles (repeat [%3 [:ctx [:stroke]]])))]
+                  (apply t> t cmds))
 
-      :ctx #(update-in % [:drawing :cmds] conj (into [:ctx] %&))
-      :canvas #(update-in % [:drawing :cmds] conj (into [:ctx] %&))}
+        ;; aliases
+        :- (tf [:turn-right])
+        :+ (tf [:turn-left])
+
+        :ctx #(update-in % [:drawing :cmds] conj (into [:ctx] %&))
+        :canvas #(update-in % [:drawing :cmds] conj (into [:ctx] %&))}
+       (:tasks opts))
 
      :drawing {:canvas "canvas"
                :cmds []
@@ -217,7 +235,12 @@
                  (clear! canvas)
                  (set! (.-strokeStyle ctx) "rgba(0,0,0,.4)")
                  (set! (.-lineWidth ctx) 1))}}
-    opts))
+    (dissoc opts :tasks)))
+
+(comment
+  (t!
+    {:cmds
+     [[:split 6 [:F]]]}))
 
 (defn init!
   "get the turtle associated canvas, extract ctx,
@@ -239,14 +262,14 @@
    handle centerization if specified
    execute all ctx actions"
   [t]
-  (let [t (reduce t> t (:cmds t))
-        ctx (get-in t [:drawing :ctx])
-        cmds (get-in t [:drawing :cmds])
-        centerize? (get-in t [:drawing :centerize?])
+  (let [{{:keys [cmds ctx centerize?]} :drawing :as t} (reduce t> t (:cmds t))
         ctx-cmds (mapcat next (filter #(= :ctx (first %)) cmds))]
+    (println "drawing-cmds: " cmds )
+    (println "center " (get-center t))
     (when centerize?
       (apply m/translate ctx (get-center t)))
     (doseq [[v & args :as c] ctx-cmds]
+      (println "ctx-cmd: " c)
       (apply (get ctx-actions v) ctx args))))
 
 (defn t!
@@ -258,26 +281,66 @@
       init!
       draw!))
 
-;; tests ------------------------------------------------------------------
-
-(defn l-system [{:keys [format rules axiom iterations result] :as opts}]
-  (if (zero? iterations)
-    (format result)
-    (recur (-> opts
-               (assoc
-                 :result
-                 (mapcat #(rules % [%]) (or result axiom)))
-               (update :iterations dec)))))
-
 (t!
   {:cmds
-   (vec (concat [[:ctx [:begin-path] [:move-to [0 0]]]]
-                (l-system
-                  {:iterations 2
-                   :axiom [:F :- :F :- :F :- :F]
-                   :rules {:F [:F :- :F :+ :F :+ :F :F :- :F :- :F :+ :F]}
-                   :format (partial map vector)})
-                [[:ctx [:stroke]]]))})
+   [[:split 3 [:F]]]})
+
+;; tests ------------------------------------------------------------------
+
+(defn l-system [{:keys [upd state format rules axiom iterations result] :as opts}]
+  (if (zero? iterations)
+    (format result)
+    (let [state (if upd (upd state) state)
+          rules (if (fn? rules) (rules state) rules)]
+      (recur (-> opts
+                 (assoc
+                   :state state
+                   :result
+                   (mapcat #(rules % [%]) (or result axiom)))
+                 (update :iterations dec))))))
+
+(defn path-cmds [cmds]
+  (vec (concat [[:ctx [:begin-path] [:move-to [0 0]]]]
+               cmds
+               [[:ctx [:stroke]]])))
+
+(comment
+  (t!
+    {:cmds
+     (path-cmds
+       (l-system
+         {:iterations 2
+          :axiom [:F :- :F :- :F :- :F]
+          :rules {:F [:F :- :F :+ :F :+ :F :F :- :F :- :F :+ :F]}
+          :format (partial map vector)}))})
+
+  (t!
+    {:cmds
+     [[:split 3 [:F]]]})
+
+  (t!
+    {:cmds
+     (path-cmds
+       (l-system
+         {:iterations 7
+          :axiom [:a]
+          :state {:angle 60 :step 10}
+          :upd (fn [_] {:angle (rand-nth (range 0 360 10))
+                        :step (rand-nth (range 10))})
+          :rules (fn [{:keys [angle step]}]
+                   (let [t1 [:turn (* 1 angle)]
+                         t2 [:turn (* 2 angle)]
+                         t3 [:turn (* 3 angle)]
+                         t4 [:turn (* 4 angle)]
+                         F [:F step]]
+                     {:a [t1 :d F t4 :b F :b t4 F :d t1]
+                      :b [t3 :c F t2 :d F :d t2 F :c t3]
+                      :c [t2 :a F t1 :c F :c t1 F :a t2]
+                      :d [t4 :b F t3 :a F :a t3 F :b t4]}))
+          :format (fn [cmds]
+                    (map #(if (vector? %) % [%])
+                         (filter (complement #{:a :b :c :d}) cmds)))}))}))
+
 
 (comment
 
@@ -286,10 +349,10 @@
     (l-system
       {:iterations 2
        :axiom [:a]
-       :rules {:a [:-- :d :F :++ :b :F :b :++ :F :d :--]
-               :b [:+ :c :F :- :d :F :d :- :F :c :+]
-               :c [:- :a :F :-- :c :F :c :-- :F :a :-]
-               :d [:++ :b :F :+ :a :F :a :+ :F :b :++]}
+       :rules {:a [:? :-- :d :F :++ :b :F :b :++ :F :d :--]
+               :b [:? :+ :c :F :- :d :F :d :- :F :c :+]
+               :c [:? :- :a :F :-- :c :F :c :-- :F :a :-]
+               :d [:? :++ :b :F :+ :a :F :a :+ :F :b :++]}
        :format
        (fn [x])}))
 
