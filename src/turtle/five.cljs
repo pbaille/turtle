@@ -7,7 +7,24 @@
 ;; helpers
 ;; ---------------------------------------------------------------------
 
-; dom ----
+; generic -
+
+(defn concretize
+  "if this is a function, call it on args, else return this"
+  [this & args]
+  (if (fn? this)
+    (apply this args)
+    this))
+
+(defn safe-call
+  "if this is a function, call it on that,
+   else return that"
+  [this that]
+  (if (fn? this)
+    (this that)
+    that))
+
+; dom -----
 
 (defn $1 [sel]
   (js/document.querySelector sel))
@@ -16,7 +33,7 @@
   (doseq [x xs]
     (js/console.log x)))
 
-; draw ---
+; draw ----
 
 (defn middle [width [left right]]
   (- (/ (- width (- right left)) 2) left))
@@ -151,19 +168,13 @@
   [turtle & tasks]
   (reduce
     (fn [t cmd]
-      (if (vector? (first cmd))
-
-        ;;vector of cmds case
-        (reduce t> t cmd)
-
-        ;;single command case
-        (let [[v & args] cmd
-              turtle-tasks (merge turtle-base-tasks (:tasks t))]
-          (if-let [task (turtle-tasks v)]
-            (apply task t args)
-            (apologize!
-              (cons v args)
-              (keys turtle-tasks))))))
+      (let [[v & args] cmd
+            turtle-tasks (merge turtle-base-tasks (:tasks t))]
+        (if-let [task (turtle-tasks v)]
+          (apply task t args)
+          (apologize!
+            (cons v args)
+            (keys turtle-tasks)))))
     turtle
     tasks))
 
@@ -183,19 +194,23 @@
      :dir 0
      :angle 90
      :step 10
-     :cmds []
+     :program nil
      :memory {}
      :tasks {}
-     :backups {}
-     :exe #(reduce t> % (:cmds %))}
+     :backups {}}
     opts))
 
 ;; Flow
 ;;----------------------------------------------------------------------
+;; a set of tasks to manage cmds execution flow
 
 (def flows
 
-  {:branch
+  {:>
+   (fn [t & xs]
+     (reduce t> t xs))
+
+   :branch
    (fn [t merge-fn & xs]
      (merge-fn t (mapv #(t> t %) xs)))
 
@@ -228,6 +243,39 @@
            l (first (filter #(<= (:min %) x (:max %)) parts))]
        (t> t (:obj l))))})
 
+(defn cmd-rmap
+  "map f recursively over cmd,
+   for a simple cmd, it does nothing,
+   but fo flow type cmds, it maps f over nested cmds"
+  [[v & args :as cmd] f]
+  (let [mfm (fn [x] (map #(cmd-rmap % f) x))]
+    (condp = v
+      :>
+      (into [:>] (mfm args))
+
+      :branch
+      (into [:branch] (mfm args))
+
+      :sym
+      [:sym (first args) (cmd-rmap (second args) f)]
+
+      :if
+      (into [:if (first args)] (mfm (next args)))
+
+      :cond
+      (into [:cond]
+            (mapcat #(vector %1 (cmd-rmap %2 f))
+                    (partition 2 args)))
+
+      :rand-nth
+      [:rand-nth (mfm (first args))]
+
+      :prob
+      [:prob (into {} (map (fn [[k v]] [k (cmd-rmap v f)])
+                           (first args)))]
+      ;;else case
+      (f cmd))))
+
 ;; Drawing
 ;;----------------------------------------------------------------------
 
@@ -245,32 +293,37 @@
             [:ctx [:begin-path] [:move-to [ox oy]] [:line-to [x y]] [:stroke] [:close-path]])))
 
    :sym
-   (fn [t n cmd]
-     (let [angles (range 0 360 (/ 360 n))
-           dc-count (-> t :drawing :cmds count)
-           merge-fn
-           (fn [turtle ts]
-             (update-in
-               turtle
-               [:drawing :cmds]
-               concat
-               (mapcat #(->> % :drawing :cmds (drop dc-count)) ts)))]
+   (fn
+     ([t n]
+       (update t :program (fn [p] [:sym n p])))
+     ([t n cmd]
+      (let [angles (range 0 360 (/ 360 n))
+            dc-count (-> t :drawing :cmds count)
+            merge-fn
+            (fn [turtle ts]
+              (update-in
+                turtle
+                [:drawing :cmds]
+                concat
+                (mapcat #(->> % :drawing :cmds (drop dc-count)) ts)))]
 
-       (t> t (into [:branch merge-fn]
-                   (map
-                     #(vector [:turn %] cmd)
-                     angles)))))
+        (t> t (into [:branch merge-fn]
+                    (map
+                      #(vector :> [:turn %] cmd)
+                      angles))))))
 
    ;; aliases
    :- (tf [:turn-right])
    :+ (tf [:turn-left])
 
+   ;; passthrough
    :ctx #(update-in % [:drawing :cmds] conj (into [:ctx] %&))
    :canvas #(update-in % [:drawing :cmds] conj (into [:ctx] %&))})
 
 (defn get-center
   "get the center coords for a drawing turtle,
-   depends on :canvas size and turtle :extent"
+   depends on :canvas size and turtle :extent
+   it means that the turtle has to execute her cmds before calling this"
   [t]
   (let [c (get-in t [:drawing :canvas])
         w (.-width c)
@@ -284,7 +337,7 @@
   (let [c ($1 "canvas")]
     {:canvas c
      :ctx (.getContext c "2d")
-     :cmds []
+     :program nil
      :centerize? true
      :init
      (fn [{{:keys [canvas ctx]} :drawing}]
@@ -295,7 +348,7 @@
      :draw!
      (fn [{{:keys [init]} :drawing :as t}]
        (init t)
-       (let [{{:keys [cmds ctx centerize?]} :drawing :as t} (reduce t> t (:cmds t))
+       (let [{{:keys [cmds ctx centerize?]} :drawing :as t} (t> t (:program t))
              ctx-cmds (mapcat next (filter #(= :ctx (first %)) cmds))]
          #_(println "drawing-cmds: " cmds)
          #_(println "center " (get-center t))
@@ -304,10 +357,13 @@
          (doseq [[v & args :as c] ctx-cmds]
            (apply (get ctx-actions v) ctx args))))}))
 
-(def drawing-turtle
-  (assoc (turtle)
-    :tasks (merge flows drawing-tasks)
-    :drawing drawing-module))
+(defn drawing-turtle
+  ([]
+   (turtle
+     {:tasks (merge flows drawing-tasks)
+      :drawing drawing-module}))
+  ([opts]
+   (merge (drawing-turtle) opts)))
 
 (defn draw!
   "compile cmds into drawing cmds,
@@ -316,38 +372,58 @@
   [t]
   ((get-in t [:drawing :draw!]) t))
 
-(draw!
-  (assoc drawing-turtle
-    :cmds
-    [[:sym 5 [[:F] [:-] [:F] [:+] [:F]]]]))
+;; Lyndenmayer Systems
+;;-------------------------------------------------------------------------
 
-;; tests ------------------------------------------------------------------
+(def ls-tasks
+  {:ls/next
+   (fn
+     ([t]
+      (let [{{:keys [rules before-next after-next]} :ls} t
+            t (safe-call before-next t)
+            rules (concretize rules t)
+            t (-> t
+                  (update-in [:ls :generation] inc)
+                  (update :program
+                          cmd-rmap
+                          #(let [r (rules (first %))]
+                             (cond
+                               (fn? r) (r %)
+                               r r
+                               :else %))))]
+        (safe-call after-next t)))
+     ([t n]
+      (t> t (into [:>] (repeat n [:ls/next])))))})
 
-(defn l-system [{:keys [upd state format rules axiom iterations result] :as opts}]
-  (if (zero? iterations)
-    (format result)
-    (let [state (if upd (upd state) state)
-          rules (if (fn? rules) (rules state) rules)]
-      (recur (-> opts
-                 (assoc
-                   :state state
-                   :result
-                   (mapcat #(rules % [%]) (or result axiom)))
-                 (update :iterations dec))))))
+(defn ls-cmd
+  "little shortcut for ls simple rules
+   ex:
+   (ls-cmd \"F-F-F\") -> [:> [:F][:-][:F][:-][:F]]
+   (ls-cmd \"one two three\") -> [:> [:one][:two][:three]]"
+  [s]
+  (let [format (partial map (comp vector keyword))]
+    (if (re-find #" " s)
+      (into [:>] (format (clojure.string/split s #" ")))
+      (into [:>] (format s)))))
 
-(defn path-cmds [cmds]
-  (vec (concat [[:ctx [:begin-path] [:move-to [0 0]]]]
-               cmds
-               [[:ctx [:stroke]]])))
+;; tests -----------------------------------------------------------------
 
-(draw!
-  (assoc drawing-turtle
-    :cmds
-    [[:sym 4 (l-system
-               {:iterations 2
-                :axiom [:F :- :F :- :F :- :F]
-                :rules {:F [:F :- :F :+ :F :+ :F :F :- :F :- :F :+ :F]}
-                :format (partial map vector)})]]))
+(comment
+  (draw!
+    (assoc (drawing-turtle)
+      :program
+      [:sym 5 [:> [:F] [:-] [:F] [:+] [:F]]])))
+
+(def ls-turtle1
+  (-> (drawing-turtle)
+      (update :tasks into ls-tasks)
+      (assoc-in [:ls :rules]
+                {:F (ls-cmd "F-F+F+FF-F-F+F")})
+      (assoc :program (ls-cmd "F-F-F-F"))))
+
+(comment
+  (draw! (t> ls-turtle1 [:ls/next 2] [:sym 4])))
+
 
 (comment
   (t!
