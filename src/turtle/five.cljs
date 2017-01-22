@@ -21,15 +21,6 @@
 (defn middle [width [left right]]
   (- (/ (- width (- right left)) 2) left))
 
-(defn get-center [t]
-  (let [c (get-in t [:drawing :canvas])
-        w (.-width c)
-        h (.-height c)
-        {minx :min maxx :max} (get-in t [:extent :x])
-        {miny :min maxy :max} (get-in t [:extent :y])]
-    [(middle w [minx maxx])
-     (middle h [miny maxy])]))
-
 (defn clear! [canvas]
   (let [ctx (m/get-context canvas "2d")
         w (.-width canvas)
@@ -38,6 +29,43 @@
 
 (defn reset-transform [ctx]
   (.setTransform ctx 1 0 0 1 0 0))
+
+(def ctx-actions
+  {:begin-path m/begin-path
+   :close-path m/close-path
+   :save m/save
+   :restore m/restore
+   :rotate m/rotate
+   :scale m/scale
+   :translate m/translate
+   :transform m/transform
+   :fill m/fill
+   :stroke m/stroke
+   :clip m/clip
+   :rect m/rect
+   :clear-rect m/clear-rect
+   :stroke-rect m/stroke-rect
+   :fill-rect m/fill-rect
+   :arc m/arc
+   :ellipse m/ellipse
+   :circle m/circle
+   :text m/text
+   :font-style m/font-style
+   :fill-style m/fill-style
+   :stroke-style m/stroke-style
+   :stroke-width m/stroke-width
+   :stroke-cap m/stroke-cap
+   :stroke-join m/stroke-join
+   :move-to (fn [ctx [x y]] (m/move-to ctx x y))
+   :line-to (fn [ctx [x y]] (m/line-to ctx x y))
+   :alpha m/alpha
+   :composition-operation m/composition-operation
+   :text-align m/text-align
+   :text-baseline m/text-baseline
+   :draw-image m/draw-image
+   :quadratic-curve-to m/quadratic-curve-to
+   :bezier-curve-to m/bezier-curve-to
+   :rounded-rect m/rounded-rect})
 
 ;; ---------------------------------------------------------------------
 ;; Turtle genesis
@@ -122,13 +150,20 @@
    ex: (t> turtle [:turn-left] [:step 10])"
   [turtle & tasks]
   (reduce
-    (fn [t [v & args]]
-      (let [turtle-tasks (merge turtle-base-tasks (:tasks t))]
-        (if-let [task (turtle-tasks v)]
-          (apply task t args)
-          (apologize!
-            (cons v args)
-            (keys turtle-tasks)))))
+    (fn [t cmd]
+      (if (vector? (first cmd))
+
+        ;;vector of cmds case
+        (reduce t> t cmd)
+
+        ;;single command case
+        (let [[v & args] cmd
+              turtle-tasks (merge turtle-base-tasks (:tasks t))]
+          (if-let [task (turtle-tasks v)]
+            (apply task t args)
+            (apologize!
+              (cons v args)
+              (keys turtle-tasks))))))
     turtle
     tasks))
 
@@ -139,151 +174,152 @@
   [& tasks]
   #(apply t> % tasks))
 
+(defn turtle
+  "something is moving under the sand"
+  [& [opts]]
+  (merge
+    {:x 0
+     :y 0
+     :dir 0
+     :angle 90
+     :step 10
+     :cmds []
+     :memory {}
+     :tasks {}
+     :backups {}
+     :exe #(reduce t> % (:cmds %))}
+    opts))
+
+;; Flow
 ;;----------------------------------------------------------------------
+
+(def flows
+
+  {:branch
+   (fn [t merge-fn & xs]
+     (merge-fn t (mapv #(t> t %) xs)))
+
+   :if
+   (fn [t p a & [b]]
+     (if (p t)
+       (t> t a)
+       (if b (t> t b) t)))
+
+   :cond
+   (fn [t & xs]
+     (loop [t t [[p a] & xs] (partition 2 xs)]
+       (if (p t)
+         (t> t a)
+         (if (seq xs)
+           (recur t xs)
+           t))))
+
+   :rand-nth
+   (fn [t xs]
+     (t> t (rand-nth xs)))
+
+   :prob
+   (fn [t m]
+     (let [sums (reductions + 0 (vals m))
+           parts (map #(hash-map :obj %1 :min (first %2) :max (second %2))
+                      (keys m)
+                      (partition 2 1 sums))
+           x (rand (last sums))
+           l (first (filter #(<= (:min %) x (:max %)) parts))]
+       (t> t (:obj l))))})
+
 ;; Drawing
 ;;----------------------------------------------------------------------
 
-(def ctx-actions
-  {:begin-path m/begin-path
-   :close-path m/close-path
-   :save m/save
-   :restore m/restore
-   :rotate m/rotate
-   :scale m/scale
-   :translate m/translate
-   :transform m/transform
-   :fill m/fill
-   :stroke m/stroke
-   :clip m/clip
-   :rect m/rect
-   :clear-rect m/clear-rect
-   :stroke-rect m/stroke-rect
-   :fill-rect m/fill-rect
-   :arc m/arc
-   :ellipse m/ellipse
-   :circle m/circle
-   :text m/text
-   :font-style m/font-style
-   :fill-style m/fill-style
-   :stroke-style m/stroke-style
-   :stroke-width m/stroke-width
-   :stroke-cap m/stroke-cap
-   :stroke-join m/stroke-join
-   :move-to (fn [ctx [x y]] (m/move-to ctx x y))
-   :line-to (fn [ctx [x y]] (m/line-to ctx x y))
-   :alpha m/alpha
-   :composition-operation m/composition-operation
-   :text-align m/text-align
-   :text-baseline m/text-baseline
-   :draw-image m/draw-image
-   :quadratic-curve-to m/quadratic-curve-to
-   :bezier-curve-to m/bezier-curve-to
-   :rounded-rect m/rounded-rect})
+(def drawing-tasks
+  {:f (tf [:step])
 
-(defn create-drawing-turtle
-  "create a drawing turtle from given options"
-  [opts]
-  (merge
-    {:step 10
-     :angle 90
+   :F (fn [t & [step]]
+        (let [{ox :x oy :y} t
+              t (if step (t> t [:set-step step]) t)
+              {:keys [x y] :as turtle} (t> t [:step])]
+          (update-in
+            turtle
+            [:drawing :cmds]
+            conj
+            [:ctx [:begin-path] [:move-to [ox oy]] [:line-to [x y]] [:stroke] [:close-path]])))
+
+   :sym
+   (fn [t n cmd]
+     (let [angles (range 0 360 (/ 360 n))
+           dc-count (-> t :drawing :cmds count)
+           merge-fn
+           (fn [turtle ts]
+             (update-in
+               turtle
+               [:drawing :cmds]
+               concat
+               (mapcat #(->> % :drawing :cmds (drop dc-count)) ts)))]
+
+       (t> t (into [:branch merge-fn]
+                   (map
+                     #(vector [:turn %] cmd)
+                     angles)))))
+
+   ;; aliases
+   :- (tf [:turn-right])
+   :+ (tf [:turn-left])
+
+   :ctx #(update-in % [:drawing :cmds] conj (into [:ctx] %&))
+   :canvas #(update-in % [:drawing :cmds] conj (into [:ctx] %&))})
+
+(defn get-center
+  "get the center coords for a drawing turtle,
+   depends on :canvas size and turtle :extent"
+  [t]
+  (let [c (get-in t [:drawing :canvas])
+        w (.-width c)
+        h (.-height c)
+        {minx :min maxx :max} (get-in t [:extent :x])
+        {miny :min maxy :max} (get-in t [:extent :y])]
+    [(middle w [minx maxx])
+     (middle h [miny maxy])]))
+
+(def drawing-module
+  (let [c ($1 "canvas")]
+    {:canvas c
+     :ctx (.getContext c "2d")
      :cmds []
-     :x 0
-     :y 0
+     :centerize? true
+     :init
+     (fn [{{:keys [canvas ctx]} :drawing}]
+       (reset-transform ctx)
+       (clear! canvas)
+       (set! (.-strokeStyle ctx) "rgba(0,0,0,.4)")
+       (set! (.-lineWidth ctx) 1))
+     :draw!
+     (fn [{{:keys [init]} :drawing :as t}]
+       (init t)
+       (let [{{:keys [cmds ctx centerize?]} :drawing :as t} (reduce t> t (:cmds t))
+             ctx-cmds (mapcat next (filter #(= :ctx (first %)) cmds))]
+         #_(println "drawing-cmds: " cmds)
+         #_(println "center " (get-center t))
+         (when centerize?
+           (apply m/translate ctx (get-center t)))
+         (doseq [[v & args :as c] ctx-cmds]
+           (apply (get ctx-actions v) ctx args))))}))
 
-     ;; extra tasks for drawing
-     :tasks
-     (merge
-       {:f #(let [{:keys [x y] :as turtle} (t> % [:step])]
-              (update-in
-                turtle
-                [:drawing :cmds]
-                conj
-                [:ctx [:stroke] [:move-to [x y]] [:begin-path]]))
-
-        :F #(let [t (if %2 (t> % [:set-step %2]) %)
-                  {:keys [x y] :as turtle} (t> t [:step])]
-              (update-in
-                turtle
-                [:drawing :cmds]
-                conj
-                [:ctx [:line-to [x y]]]))
-
-        :split #(let [{:keys [x y] :as t} %
-                      angles (map (fn [a] [[:ctx [:close-path]]
-                                           [:goto [x y]]
-                                           [:ctx [:begin-path]]
-                                           [:ctx [:move-to [(or x 0) (or y 0)]]]
-                                           [:turn a]])
-                                  (cons 0 (repeat (dec %2) (/ 360 %2))))
-                      cmds (apply concat (interleave angles (repeat [%3 [:ctx [:stroke]]])))]
-                  (apply t> t cmds))
-
-        ;; aliases
-        :- (tf [:turn-right])
-        :+ (tf [:turn-left])
-
-        :ctx #(update-in % [:drawing :cmds] conj (into [:ctx] %&))
-        :canvas #(update-in % [:drawing :cmds] conj (into [:ctx] %&))}
-       (:tasks opts))
-
-     :drawing {:canvas "canvas"
-               :cmds []
-               :centerize? true
-               :init
-               (fn [canvas ctx]
-                 (reset-transform ctx)
-                 (clear! canvas)
-                 (set! (.-strokeStyle ctx) "rgba(0,0,0,.4)")
-                 (set! (.-lineWidth ctx) 1))}}
-    (dissoc opts :tasks)))
-
-(comment
-  (t!
-    {:cmds
-     [[:split 6 [:F]]]}))
-
-(defn init!
-  "get the turtle associated canvas, extract ctx,
-   apply initialize fn ([:drawing :init])"
-  [{{:keys [canvas init]} :drawing :as turtle}]
-  (let [c (if (string? canvas)
-            ($1 canvas)
-            canvas)
-        ctx (.getContext c "2d")]
-    (init c ctx)
-    (update turtle
-            :drawing
-            assoc
-            :canvas c
-            :ctx ctx)))
+(def drawing-turtle
+  (assoc (turtle)
+    :tasks (merge flows drawing-tasks)
+    :drawing drawing-module))
 
 (defn draw!
   "compile cmds into drawing cmds,
    handle centerization if specified
    execute all ctx actions"
   [t]
-  (let [{{:keys [cmds ctx centerize?]} :drawing :as t} (reduce t> t (:cmds t))
-        ctx-cmds (mapcat next (filter #(= :ctx (first %)) cmds))]
-    (println "drawing-cmds: " cmds )
-    (println "center " (get-center t))
-    (when centerize?
-      (apply m/translate ctx (get-center t)))
-    (doseq [[v & args :as c] ctx-cmds]
-      (println "ctx-cmd: " c)
-      (apply (get ctx-actions v) ctx args))))
+  ((get-in t [:drawing :draw!]) t))
 
-(defn t!
-  "all in one helper to create a drawing turtle from an option map,
-   initialize it then draw"
-  [opts]
-  (-> opts
-      create-drawing-turtle
-      init!
-      draw!))
-
-(t!
-  {:cmds
-   [[:split 3 [:F]]]})
+(draw!
+  (assoc drawing-turtle
+    :cmds
+    [[:sym 5 [[:F] [:-] [:F] [:+] [:F]]]]))
 
 ;; tests ------------------------------------------------------------------
 
@@ -304,6 +340,15 @@
                cmds
                [[:ctx [:stroke]]])))
 
+(draw!
+  (assoc drawing-turtle
+    :cmds
+    [[:sym 4 (l-system
+               {:iterations 2
+                :axiom [:F :- :F :- :F :- :F]
+                :rules {:F [:F :- :F :+ :F :+ :F :F :- :F :- :F :+ :F]}
+                :format (partial map vector)})]]))
+
 (comment
   (t!
     {:cmds
@@ -313,6 +358,15 @@
           :axiom [:F :- :F :- :F :- :F]
           :rules {:F [:F :- :F :+ :F :+ :F :F :- :F :- :F :+ :F]}
           :format (partial map vector)}))})
+
+  (draw!
+    (assoc drawing-turtle
+      :cmds
+      [[:sym 3 (l-system
+                 {:iterations 2
+                  :axiom [:F :- :F :- :F :- :F]
+                  :rules {:F [:F :- :F :+ :F :+ :F :F :- :F :- :F :+ :F]}
+                  :format (partial map vector)})]]))
 
   (t!
     {:cmds
