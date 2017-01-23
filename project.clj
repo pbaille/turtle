@@ -11,7 +11,8 @@
                            [garden "1.3.2"]
                            [rm-hull/monet "0.3.0"]]
             :plugins [[lein-cljsbuild "1.1.0"]
-                      [lein-garden "0.2.6"]]
+                      [lein-garden "0.2.6"]
+                      [lein-marginalia "0.9.0"]]
             :source-paths ["src" "script"]
             :cljsbuild {:builds [{:id           "min"
                                   :source-paths ["src"]

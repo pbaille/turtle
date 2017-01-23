@@ -94,11 +94,19 @@
 
 (def turtle-base-tasks
   "turtle base tasks"
-  {:goto
-   #(assoc % :x (first %2) :y (second %2))
+  {
+   :self identity
+
+   :swap
+   (fn [t f & args] (apply f t args))
+
+   :goto
+   (fn [t [x y]] (assoc t :x x :y y))
+
+   ;; steps --------------------
 
    :set-step
-   #(assoc %1 :step %2)
+   (fn [t step] (assoc t :step step))
 
    :step
    (fn [{:keys [dir step x y extent visited-coords] :as turtle} & [step*]]
@@ -120,40 +128,53 @@
           :y {:min (min miny y) :max (max maxy y)}})))
 
    :step!
-   #(t> %1 [:set-step! %2] [:step])
+   (fn [t step] (t> t [:set-step! step] [:step]))
+
+   ;; turns ---------------------
 
    :turn
-   #(update %1 :dir + %2)
+   (fn [t angle] (update t :dir + angle))
 
    :turn-left
-   #(t> % [:turn (* (:angle %) (or %2 1))])
+   (fn [t & [angle]] (t> t [:turn (* (:angle t) (or angle 1))]))
 
    :turn-right
-   #(t> % [:turn (- (* (:angle %) (or %2 1)))])
+   (fn [t & [angle]] (t> t [:turn (- (* (:angle t) (or angle 1)))]))
 
    :set-angle
-   #(assoc %1 :angle %2)
+   (fn [t angle] (assoc t :angle angle))
 
    :turn!
-   #(t> %1 [:set-angle! %2] [:turn])
+   (fn [t angle] (t> t [:set-angle angle] [:turn]))
+
+   ;; backups --------------------
 
    :save
-   #(update % :backups assoc %2 (t> % [:clear-backups]))
+   (fn [t backup-key] (update t :backups assoc backup-key (t> t [:clear-backups])))
 
    :restore
-   #(assoc (get (:backups %) %2) :backups (:backups %))
+   (fn [t backup-key] (assoc (get (:backups t) backup-key) :backups (:backups t)))
 
    :clear-backups
-   #(dissoc % :backups)
+   (fn [t] (dissoc t :backups))
+
+   ;; memory ----------------------
 
    :memorize
-   #(assoc %1 :memory %2 %3)
+   (fn
+     ([t mem-map] (update t :memory into mem-map))
+     ([t mem-key impl] (assoc-in t [:memory mem-key] impl)))
 
    :forget
-   #(dissoc %1 :memory %2)
+   (fn [t & mem-keys]
+     (update t :memory #(apply dissoc % mem-keys)))
+
+   ;; tasks -----------------------
 
    :learn
-   #(assoc %1 :tasks %2 %3)})
+   (fn
+     ([t task-map] (update t :tasks into task-map))
+     ([t task-key impl] (assoc-in t [:tasks task-key] impl)))})
 
 (defn- apologize!
   "when a turtle does not know how to do the task, she speaks"
@@ -169,9 +190,11 @@
    ex: (t> turtle [:turn-left] [:step 10])"
   [turtle & cmds]
   (reduce
-    (fn [t [v & args :as cmd]]
-      (let [turtle-tasks (merge turtle-base-tasks (:tasks t))]
-        (if-let [task (turtle-tasks v)]
+    (fn [t cmd]
+      (let [[v & args] cmd
+            turtle-tasks (merge turtle-base-tasks (:tasks t))
+            task (turtle-tasks v)]
+        (if task
           (apply task t args)
           (apologize!
             (cons v args)
@@ -207,38 +230,54 @@
 
 (def flows
 
-  {:>
-   (fn [t & xs]
-     (reduce t> t xs))
+  {
+   ;; direct flow execute given cmds sequentially
+   :>
+   (fn [t & cmds]
+     (reduce t> t cmds))
 
+   ;; branch
+   ;; the flow is paralelized,
+   ;; then the resulting turtles are merged as specified via merge-fn.
+   ;; merge-fn :: [initial-turtle resulting-turtles] => final-turtle
    :branch
-   (fn [t merge-fn & xs]
-     (merge-fn t (mapv #(t> t %) xs)))
+   (fn [t merge-fn & cmds]
+     (merge-fn t (mapv #(t> t %) cmds)))
 
+   ;; if (pred turtle) is true
+   ;; then do true-cmd
+   ;; elsif false-cmd is given do it
+   ;; else return turtle unchanged
    :if
-   (fn [t p a & [b]]
-     (if (p t)
-       (t> t a)
-       (if b (t> t b) t)))
+   (fn [t pred true-cmd & [false-cmd]]
+     (cond
+       (pred t) (t> t true-cmd)
+       false-cmd (t> t false-cmd)
+       :else t))
 
+   ;; given a collection of turtle-preds interleaved with cmds
+   ;; if a pred succeed, do the assiociated cmd
+   ;; else return turtle unchanged
    :cond
-   (fn [t & xs]
-     (loop [t t [[p a] & xs] (partition 2 xs)]
-       (if (p t)
-         (t> t a)
-         (if (seq xs)
-           (recur t xs)
-           t))))
+   (fn [t & pred-cmd-seq]
+     (loop [t t [[p cmd] & xs] (partition 2 pred-cmd-seq)]
+       (cond
+         (p t) (t> t cmd)
+         (seq xs) (recur t xs)
+         :else t)))
 
+   ;; execute a random cmd in the given cmds
    :rand-nth
-   (fn [t xs]
-     (t> t (rand-nth xs)))
+   (fn [t cmds]
+     (t> t (rand-nth cmds)))
 
+   ;; given a {prob-weight cmd} map
+   ;; execute the picked cmd
    :prob
-   (fn [t m]
-     (let [sums (reductions + 0 (vals m))
+   (fn [t prob-cmd-map]
+     (let [sums (reductions + 0 (vals prob-cmd-map))
            parts (map #(hash-map :obj %1 :min (first %2) :max (second %2))
-                      (keys m)
+                      (keys prob-cmd-map)
                       (partition 2 1 sums))
            x (rand (last sums))
            l (first (filter #(<= (:min %) x (:max %)) parts))]
@@ -247,7 +286,7 @@
 (defn cmd-rmap
   "map f recursively over cmd,
    for a simple cmd, it does nothing,
-   but fo flow type cmds, it maps f over nested cmds"
+   but for flow type cmds, it maps f over nested cmds"
   [[v & args :as cmd] f]
   (let [mfm (fn [x] (map #(cmd-rmap % f) x))]
     (condp = v
@@ -340,6 +379,7 @@
      (middle h [miny maxy])]))
 
 (def drawing-module
+  "where the dirty stuff occur..."
   (let [c ($1 "canvas")]
     {:canvas c
      :ctx (.getContext c "2d")
@@ -384,7 +424,9 @@
 ;;-------------------------------------------------------------------------
 
 (def ls-tasks
-  {:ls/next
+  {
+   ;;
+   :ls/next
    (fn
      ([t]
       (let [{{:keys [rules before-next after-next]} :ls} t
@@ -423,7 +465,7 @@
       [:sym 5 [:> [:F] [:-] [:F] [:+] [:F]]])))
 
 (def ls-turtle1
-  (-> (drawing-turtle)
+  (-> (drawing-turtle {:angle 80})
       (update :tasks into ls-tasks)
       (assoc-in [:ls :rules]
                 {:F (ls-cmd "F-F+F+FF-F-F+F")})
@@ -431,4 +473,26 @@
 
 (comment
   (draw! (t> ls-turtle1 [:ls/next 2] [:sym 4])))
+
+(comment
+  (draw! (t> (-> (drawing-turtle {:angle 60 :step 10})
+                 (update :tasks into ls-tasks)
+                 (assoc-in [:ls :rules]
+                           #(let [angle (rand-nth (range 0 360 10))
+                                  step (+ 10 (rand-int 10))
+                                  t1 [:turn (* 1 angle)]
+                                  t2 [:turn (* 2 angle)]
+                                  t3 [:turn (* 3 angle)]
+                                  t4 [:turn (* 4 angle)]
+                                  F [:F step]
+                                  f [:f step]]
+                              {:a [:> t1 [:d] F t4 [:b] F [:b] t4 F [:d] t1]
+                               :b [:> t3 [:c] F t2 [:d] F [:d] t2 F [:c] t3]
+                               :c [:> t2 [:a] F t1 [:c] F [:c] t1 F [:a] t2]
+                               :d [:> t4 [:b] F t3 [:a] F [:a] t3 F [:b] t4]}))
+                 (assoc :program [:a]))
+             [:ls/next 6]
+             [:swap (fn [t] (update t :program cmd-rmap #(if (#{[:a] [:b] [:c] [:d]} %) [:self] %)))]
+             [:sym 4])))
+
 
