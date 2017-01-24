@@ -116,6 +116,7 @@
            radians (* dir js/Math.PI (/ 180))
            [dx dy] [(* step (js/Math.sin radians))
                     (* step (js/Math.cos radians))]]
+
        (assoc turtle
          :x (+ x dx)
          :y (+ y dy)
@@ -184,6 +185,8 @@
       (str "The turtle: I doesn't know how do that: " task
            "\n but I can do all of those things: " tasks))))
 
+(declare flows)
+
 (defn t>
   "take a cooperative turtle and any number of turtle-cmds
    and return the turtle when she have completed all the tasks
@@ -192,13 +195,12 @@
   (reduce
     (fn [t cmd]
       (let [[v & args] cmd
-            turtle-tasks (merge turtle-base-tasks (:tasks t))
-            task (turtle-tasks v)]
+            task (or (turtle-base-tasks v) ((:tasks t) v))]
         (if task
           (apply task t args)
           (apologize!
             (cons v args)
-            (keys turtle-tasks)))))
+            #{} #_(keys turtle-base-tasks)))))
     turtle
     cmds))
 
@@ -394,14 +396,24 @@
      :draw!
      (fn [{{:keys [init]} :drawing :as t}]
        (init t)
-       (let [{{:keys [cmds ctx centerize?]} :drawing :as t} (t> t (:program t))
+       #_(println (js/Date.))
+       (let [;b (.getTime (js/Date.))
+             {{:keys [cmds ctx centerize?]} :drawing :as t} (t> t (:program t))
+             ;_ (println "after program" (- (.getTime (js/Date.)) b))
              ctx-cmds (mapcat next (filter #(= :ctx (first %)) cmds))]
          #_(println "drawing-cmds: " cmds)
          #_(println "center " (get-center t))
          (when centerize?
            (apply m/translate ctx (get-center t)))
-         (doseq [[v & args :as c] ctx-cmds]
-           (apply (get ctx-actions v) ctx args))))}))
+         #_((:begin-path ctx-actions) ctx)
+         (let [;b (.getTime (js/Date.))
+               ]
+           (doseq [[v & args :as c] ctx-cmds]
+             (apply (get ctx-actions v) ctx args))
+           ;(println "after draw" (- (.getTime (js/Date.)) b))
+           )
+         nil
+         #_((:stroke ctx-actions) ctx)))}))
 
 (defn drawing-turtle
   "this turtle doesn't want to do real job"
@@ -437,10 +449,10 @@
                   (update :program
                           cmd-rmap
                           #(let [r (rules (first %))]
-                             (cond
-                               (fn? r) (r %)
-                               r r
-                               :else %))))]
+                            (cond
+                              (fn? r) (r %)
+                              r r
+                              :else %))))]
         (safe-call after-next t)))
      ([t n]
       (t> t (into [:>] (repeat n [:ls/next])))))})
@@ -474,25 +486,38 @@
 (comment
   (draw! (t> ls-turtle1 [:ls/next 2] [:sym 4])))
 
+#_(let [t (drawing-turtle {:angle 60 :step 10})]
+    (time
+      (dotimes [_ 10000]
+        ((:step turtle-base-tasks) t))))
+
+#_(let [t (drawing-turtle {:angle 60 :step 10})]
+    (time
+      (do (t> t (into [:>] (repeat 10000 [:step]))) nil)))
+
+
 (comment
-  (draw! (t> (-> (drawing-turtle {:angle 60 :step 10})
-                 (update :tasks into ls-tasks)
-                 (assoc-in [:ls :rules]
-                           #(let [angle (rand-nth (range 0 360 10))
-                                  step (+ 10 (rand-int 10))
-                                  t1 [:turn (* 1 angle)]
-                                  t2 [:turn (* 2 angle)]
-                                  t3 [:turn (* 3 angle)]
-                                  t4 [:turn (* 4 angle)]
-                                  F [:F step]
-                                  f [:f step]]
-                              {:a [:> t1 [:d] F t4 [:b] F [:b] t4 F [:d] t1]
-                               :b [:> t3 [:c] F t2 [:d] F [:d] t2 F [:c] t3]
-                               :c [:> t2 [:a] F t1 [:c] F [:c] t1 F [:a] t2]
-                               :d [:> t4 [:b] F t3 [:a] F [:a] t3 F [:b] t4]}))
-                 (assoc :program [:a]))
-             [:ls/next 6]
-             [:swap (fn [t] (update t :program cmd-rmap #(if (#{[:a] [:b] [:c] [:d]} %) [:self] %)))]
-             [:sym 4])))
+  (time
+    (dotimes [_ 30]
+      (draw! (t> (-> (drawing-turtle {:angle 60 :step 10})
+                     (update :tasks into ls-tasks)
+                     (assoc-in [:ls :rules]
+                               #(let [angle (rand-nth (range 0 360 30))
+                                      step (+ 10 (rand-int 10))
+                                      t1 [:turn (* 1 angle)]
+                                      t2 [:turn (* 2 angle)]
+                                      t3 [:turn (* 3 angle)]
+                                      t4 [:turn (* 4 angle)]
+                                      F [:F step]
+                                      f [:f step]]
+                                 {:a [:> t1 [:d] F t4 [:b] F [:b] t4 F [:d] t1]
+                                  :b [:> t3 [:c] F t2 [:d] F [:d] t2 F [:c] t3]
+                                  :c [:> t2 [:a] F t1 [:c] F [:c] t1 F [:a] t2]
+                                  :d [:> t4 [:b] F t3 [:a] F [:a] t3 F [:b] t4]}))
+                     (assoc :program [:a]))
+                 [:ls/next 6]
+                 [:swap (fn [t] (update t :program cmd-rmap #(if (#{[:a] [:b] [:c] [:d]} %) [:self] %)))]
+                 [:sym 5])))))
+
 
 
