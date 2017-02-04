@@ -430,26 +430,13 @@
      :draw!
      (fn [{{:keys [init]} :drawing :as t}]
        (init t)
-       #_(println (js/Date.))
-       (let [;b (.getTime (js/Date.))
-             {{:keys [cmds ctx centerize?]} :drawing :as t} (t> t (:program t))
-             ;_ (println "after program" (- (.getTime (js/Date.)) b))
+       (let [{{:keys [cmds ctx centerize?]} :drawing :as t} (t> t (:program t))
              ctx-cmds (mapcat next (filter #(= :ctx (first %)) cmds))]
-         #_(println (count ctx-cmds))
-         #_(println "drawing-cmds: " cmds)
-         #_(println "ks " (select-keys turtle [:x :y :angle :dir :visited-coords :extent]))
-         #_(println "center " (get-center turtle))
          (when centerize?
            (apply m/translate ctx (get-center t)))
-         #_((:begin-path ctx-actions) ctx)
-         (let [;b (.getTime (js/Date.))
-               ]
-           (doseq [[v & args :as c] ctx-cmds]
-             (apply (get ctx-actions v) ctx args))
-           ;(println "after draw" (- (.getTime (js/Date.)) b))
-           )
-         nil
-         #_((:stroke ctx-actions) ctx)))}))
+         (doseq [[v & args :as c] ctx-cmds]
+           (apply (get ctx-actions v) ctx args))
+         nil))}))
 
 (defn drawing-turtle
   "this turtle doesn't want to do real job"
