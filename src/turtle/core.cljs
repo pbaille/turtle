@@ -174,7 +174,11 @@
    :learn
    (fn
      ([t task-map] (update t :tasks into task-map))
-     ([t task-key impl] (assoc-in t [:tasks task-key] impl)))})
+     ([t task-key impl] (assoc-in t [:tasks task-key] impl)))
+
+   :wrap-task
+   (fn [t task-key f]
+     (update-in t [:tasks task-key] f))})
 
 (defn- apologize!
   "when a turtle does not know how to do the task, she speaks"
@@ -190,15 +194,13 @@
    ex: (t> turtle [:turn-left] [:step 10])"
   [turtle & cmds]
   (reduce
-    (fn [t cmd]
-      (let [[v & args] cmd
-            turtle-tasks (merge turtle-base-tasks (:tasks t))
-            task (turtle-tasks v)]
-        (if task
-          (apply task t args)
-          (apologize!
-            (cons v args)
-            (keys turtle-tasks)))))
+    (fn [t [v & args :as cmd]]
+      #_(println (:extent t) v)
+      (if-let [task ((:tasks t) v)]
+        (apply task t args)
+        (apologize!
+          (cons v args)
+          (keys (:tasks t)))))
     turtle
     cmds))
 
@@ -220,9 +222,13 @@
      :step 10
      :program nil
      :memory {}
-     :tasks {}
-     :backups {}}
-    opts))
+     :backups {}
+     :extent {:x {:min 0 :max 0}
+              :y {:min 0 :max 0}}}
+    (update opts
+            :tasks
+            merge
+            turtle-base-tasks)))
 
 ;; Flow
 ;;----------------------------------------------------------------------
@@ -319,6 +325,30 @@
 ;; Drawing
 ;;----------------------------------------------------------------------
 
+(defn get-center
+  "get the center coords for a drawing turtle,
+   depends on :canvas size and turtle :extent
+   it means that the turtle has to execute her cmds before calling this"
+  [t]
+  (let [c (get-in t [:drawing :canvas])
+        w (.-width c)
+        h (.-height c)
+        {minx :min maxx :max} (get-in t [:extent :x])
+        {miny :min maxy :max} (get-in t [:extent :y])]
+    [(middle w [minx maxx])
+     (middle h [miny maxy])]))
+
+(defn merge-extents [exts]
+  (reduce
+    (fn [{{minx :min maxx :max} :x
+          {miny :min maxy :max} :y}
+         {{minx1 :min maxx1 :max} :x
+          {miny1 :min maxy1 :max} :y}]
+      {:x {:min (min minx minx1) :max (max maxx maxx1)}
+       :y {:min (min miny miny1) :max (max maxy maxy1)}})
+    (first exts)
+    (next exts)))
+
 (def drawing-tasks
   {:f (tf [:step])
 
@@ -337,6 +367,19 @@
              [:stroke]
              [:close-path]])))
 
+   :circle
+   (fn [{:keys [x y] :as t} r]
+     (t> t
+         [:ctx
+          [:begin-path]
+          [:circle {:x x :y y :r r}]
+          [:stroke]]))
+
+   :circle-step
+   (fn [t & [step]]
+     (let [r (/ (or step (:step t)) 2)]
+       (t> t [:step r] [:circle r] [:step r])))
+
    :sym
    (fn
      ([t n]
@@ -346,11 +389,12 @@
             dc-count (-> t :drawing :cmds count)
             merge-fn
             (fn [turtle ts]
-              (update-in
-                turtle
-                [:drawing :cmds]
-                concat
-                (mapcat #(->> % :drawing :cmds (drop dc-count)) ts)))]
+              (-> turtle
+                  (update :extent #(merge-extents (cons % (map :extent ts))))
+                  (update-in
+                    [:drawing :cmds]
+                    concat
+                    (mapcat #(->> % :drawing :cmds (drop dc-count)) ts))))]
 
         (t> t (into [:branch merge-fn]
                     (map
@@ -365,18 +409,6 @@
    :ctx #(update-in % [:drawing :cmds] conj (into [:ctx] %&))
    :canvas #(update-in % [:drawing :cmds] conj (into [:ctx] %&))})
 
-(defn get-center
-  "get the center coords for a drawing turtle,
-   depends on :canvas size and turtle :extent
-   it means that the turtle has to execute her cmds before calling this"
-  [t]
-  (let [c (get-in t [:drawing :canvas])
-        w (.-width c)
-        h (.-height c)
-        {minx :min maxx :max} (get-in t [:extent :x])
-        {miny :min maxy :max} (get-in t [:extent :y])]
-    [(middle w [minx maxx])
-     (middle h [miny maxy])]))
 
 (def drawing-module
   "where the dirty stuff occur..."
@@ -389,17 +421,19 @@
      (fn [{{:keys [canvas ctx]} :drawing}]
        (reset-transform ctx)
        (clear! canvas)
-       (set! (.-strokeStyle ctx) "rgba(0,0,0,.4)")
+       (set! (.-strokeStyle ctx) "rgba(0,0,0,.2)")
        (set! (.-lineWidth ctx) 1))
      :draw!
      (fn [{{:keys [init]} :drawing :as t}]
        (init t)
-       (let [{{:keys [cmds ctx centerize?]} :drawing :as t} (t> t (:program t))
+       (let [{{:keys [cmds ctx centerize?]} :drawing :as turtle} (t> t (:program t))
              ctx-cmds (mapcat next (filter #(= :ctx (first %)) cmds))]
+         #_(println (count ctx-cmds))
          #_(println "drawing-cmds: " cmds)
-         #_(println "center " (get-center t))
+         #_(println "ks " (select-keys turtle [:x :y :angle :dir :visited-coords :extent]))
+         #_(println "center " (get-center turtle))
          (when centerize?
-           (apply m/translate ctx (get-center t)))
+           (apply m/translate ctx (get-center turtle)))
          (doseq [[v & args :as c] ctx-cmds]
            (apply (get ctx-actions v) ctx args))))}))
 
@@ -474,25 +508,67 @@
 (comment
   (draw! (t> ls-turtle1 [:ls/next 2] [:sym 4])))
 
-(comment
+(t> (-> (drawing-turtle {:angle 60 :step 10})
+        (update :tasks into ls-tasks)
+        (assoc-in [:ls :rules]
+                  #(let [angle (rand-nth (range 0 360 10))
+                         step (+ 10 (rand-int 10))
+                         t1 [:turn (* 1 angle)]
+                         t2 [:turn (* 2 angle)]
+                         t3 [:turn (* 3 angle)]
+                         t4 [:turn (* 4 angle)]
+                         F [:F step]
+                         f [:f step]]
+                     {:a [:> t1 [:d] F t4 [:b] F [:b] t4 F [:d] t1]
+                      :b [:> t3 [:c] F t2 [:d] F [:d] t2 F [:c] t3]
+                      :c [:> t2 [:a] F t1 [:c] F [:c] t1 F [:a] t2]
+                      :d [:> t4 [:b] F t3 [:a] F [:a] t3 F [:b] t4]}))
+        (assoc :program [:a]))
+    [:ls/next 2]
+    [:swap (fn [t] (update t :program cmd-rmap #(if (#{[:a] [:b] [:c] [:d]} %) [:self] %)))]
+    [:sym 2])
+
+(defn color [c]
+  [:ctx [:stroke-style c]])
+
+(def break-path
+  [:ctx [:stroke] [:begin-path]])
+
+(defn fill [c]
+  [:ctx [:fill-style c]])
+
+(defn f []
   (draw! (t> (-> (drawing-turtle {:angle 60 :step 10})
                  (update :tasks into ls-tasks)
                  (assoc-in [:ls :rules]
-                           #(let [angle (rand-nth (range 0 360 10))
-                                  step (+ 10 (rand-int 10))
-                                  t1 [:turn (* 1 angle)]
-                                  t2 [:turn (* 2 angle)]
-                                  t3 [:turn (* 3 angle)]
-                                  t4 [:turn (* 4 angle)]
-                                  F [:F step]
-                                  f [:f step]]
-                              {:a [:> t1 [:d] F t4 [:b] F [:b] t4 F [:d] t1]
-                               :b [:> t3 [:c] F t2 [:d] F [:d] t2 F [:c] t3]
-                               :c [:> t2 [:a] F t1 [:c] F [:c] t1 F [:a] t2]
-                               :d [:> t4 [:b] F t3 [:a] F [:a] t3 F [:b] t4]}))
+                           (fn [{:keys [angle step]}]
+                             (let [t1 [:turn angle]
+                                   t2 [:turn (- angle)]
+                                   r (rand-int 5)
+                                   F [:F step]
+                                   f [:f step]]
+                               {:a [:> t1 [:d] F t2 [:b] F [:b] t2 F [:d] t1]
+                                :b [:> t1 [:c] F t2 [:d] F [:d] t2 F [:c] t1]
+                                :c [:> t2 [:a] F t1 [:c] [:circle-step step] [:c] t1 F [:a] t2]
+                                :d [:> t2 [:b] [:circle-step step] t1 [:a] F [:a] t1 F [:b] t2]})))
                  (assoc :program [:a]))
-             [:ls/next 6]
+             [:wrap-task
+              :ls/next
+              (fn [f]
+                (fn
+                  ([t]
+                   (f (assoc t :step (rand-nth (next (range 5 10)))
+                               :angle (rand-nth (range 0 360 1)))))
+                  ([t n] (f t n))))]
+             [:ls/next 4]
              [:swap (fn [t] (update t :program cmd-rmap #(if (#{[:a] [:b] [:c] [:d]} %) [:self] %)))]
-             [:sym 4])))
+             [:sym 3])))
+
+(defonce i (atom nil))
+
+(comment
+  (reset! i (js/setInterval f 2000))
+  (swap! i #(js/clearInterval %)))
+
 
 
